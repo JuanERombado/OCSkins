@@ -6,12 +6,12 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class ThemeTokens:
     font_family: str = "Segoe UI"
-    panel_background_rgba: str = "rgba(10, 15, 24, 188)"
-    panel_border_rgba: str = "rgba(255, 231, 205, 150)"
+    panel_background_rgba: str = "rgba(9, 18, 31, 204)"
+    panel_border_rgba: str = "rgba(255, 223, 189, 118)"
     text: str = "#FFF4E7"
-    text_muted: str = "#F0DDCB"
-    accent: str = "#F08F4B"
-    accent_hover: str = "#FDB271"
+    text_muted: str = "#D8DDE6"
+    accent: str = "#E98A4B"
+    accent_hover: str = "#F7A565"
     success: str = "#51B36E"
     danger: str = "#D26452"
     warning: str = "#F3C563"
@@ -26,13 +26,13 @@ def build_stylesheet(theme: ThemeTokens) -> str:
     }}
     QFrame#OverlayPanel {{
         background: {theme.panel_background_rgba};
-        border: 2px solid {theme.panel_border_rgba};
-        border-radius: 28px;
+        border: 1px solid {theme.panel_border_rgba};
+        border-radius: 30px;
     }}
     QLabel#PanelTitle {{
         color: {theme.text};
-        font-size: 30px;
-        font-weight: 700;
+        font-size: 32px;
+        font-weight: 800;
     }}
     QLabel#StatusLabel {{
         color: {theme.text};
@@ -41,7 +41,7 @@ def build_stylesheet(theme: ThemeTokens) -> str:
     }}
     QLabel#DetailLabel {{
         color: {theme.text_muted};
-        font-size: 16px;
+        font-size: 17px;
     }}
     QLabel#FeedbackLabel {{
         color: {theme.warning};
@@ -50,25 +50,54 @@ def build_stylesheet(theme: ThemeTokens) -> str:
     }}
     QLabel#ScaleLabel {{
         color: {theme.text_muted};
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 600;
     }}
     QPushButton {{
-        background: rgba(255, 255, 255, 22);
+        background: rgba(255, 255, 255, 12);
         color: {theme.text};
-        border: 1px solid rgba(255, 255, 255, 40);
-        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 24);
+        border-radius: 16px;
         font-size: 15px;
-        font-weight: 600;
-        min-height: 46px;
+        font-weight: 700;
+        min-height: 50px;
         padding: 10px 18px;
     }}
     QPushButton:hover {{
-        border-color: {theme.accent_hover};
+        border-color: rgba(255, 255, 255, 56);
+        background: rgba(255, 255, 255, 16);
     }}
     QPushButton:disabled {{
         color: rgba(255, 255, 255, 110);
         border-color: rgba(255, 255, 255, 26);
+        background: rgba(255, 255, 255, 8);
+    }}
+    QPushButton#PrimaryButton {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 {theme.accent}, stop: 1 #C55D34);
+        border: 1px solid rgba(255, 233, 214, 128);
+        color: #FFF8F1;
+    }}
+    QPushButton#PrimaryButton:hover {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 {theme.accent_hover}, stop: 1 #DE7143);
+        border-color: rgba(255, 245, 230, 180);
+    }}
+    QPushButton#SecondaryButton {{
+        background: rgba(255, 255, 255, 14);
+        border: 1px solid rgba(255, 255, 255, 42);
+    }}
+    QPushButton#SecondaryButton:hover {{
+        background: rgba(255, 255, 255, 20);
+        border-color: rgba(255, 255, 255, 78);
+    }}
+    QPushButton#UtilityButton {{
+        min-height: 38px;
+        min-width: 38px;
+        padding: 6px 12px;
+        border-radius: 13px;
+        font-size: 14px;
+        font-weight: 700;
+        background: rgba(255, 255, 255, 10);
+        border: 1px solid rgba(255, 255, 255, 34);
     }}
     QCheckBox {{
         color: {theme.text};

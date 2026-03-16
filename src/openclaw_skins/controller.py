@@ -28,9 +28,16 @@ class OpenClawController(QObject):
         self.cli_bridge = cli_bridge or OpenClawCliBridge(self)
         self.busy_tracker = BusyRunTracker()
         self._service_status = GatewayServiceStatus()
+        self._transient_busy = False
+        self._last_busy_state = False
+        self._activity_hold_timer = QTimer(self)
+        self._activity_hold_timer.setSingleShot(True)
+        self._activity_hold_timer.setInterval(1_400)
+        self._activity_hold_timer.timeout.connect(self._clear_transient_busy)
 
         self.gateway_client.connection_state_changed.connect(self._on_connection_state)
         self.gateway_client.agent_event_received.connect(self._on_agent_event)
+        self.gateway_client.activity_detected.connect(self._on_gateway_activity)
         self.cli_bridge.service_status_changed.connect(self._on_service_status)
         self.cli_bridge.command_finished.connect(self._on_command_finished)
 
@@ -45,7 +52,9 @@ class OpenClawController(QObject):
         settings = self.settings_store.settings
         auth = self.cli_bridge.discover_gateway_auth(settings)
         self.busy_tracker.clear()
-        self.busy_changed.emit(False)
+        self._transient_busy = False
+        self._activity_hold_timer.stop()
+        self._emit_busy_state()
         if self.cli_bridge.check_gateway_status(settings):
             self.action_running_changed.emit("status", True)
         self.gateway_client.start(
@@ -74,15 +83,24 @@ class OpenClawController(QObject):
         self.connection_state_changed.emit(state)
         if getattr(state, "transport_connected", False):
             return
-        if self.busy_tracker.busy:
+        if self.busy_tracker.busy or self._transient_busy:
             self.busy_tracker.clear()
-            self.busy_changed.emit(False)
+            self._transient_busy = False
+            self._activity_hold_timer.stop()
+            self._emit_busy_state()
 
     def _on_agent_event(self, run_id: str, stream: str, data: object) -> None:
-        before = self.busy_tracker.busy
-        after = self.busy_tracker.apply_agent_event(run_id, stream, data)
-        if after != before:
-            self.busy_changed.emit(after)
+        self.busy_tracker.apply_agent_event(run_id, stream, data)
+        self._emit_busy_state()
+
+    def _on_gateway_activity(self, _event_name: str) -> None:
+        self._transient_busy = True
+        self._activity_hold_timer.start()
+        self._emit_busy_state()
+
+    def _clear_transient_busy(self) -> None:
+        self._transient_busy = False
+        self._emit_busy_state()
 
     def _on_service_status(self, status: object) -> None:
         if isinstance(status, GatewayServiceStatus):
@@ -98,3 +116,10 @@ class OpenClawController(QObject):
                 QTimer.singleShot(1_000, self.refresh)
         elif not ok:
             self.feedback_changed.emit(message, False)
+
+    def _emit_busy_state(self) -> None:
+        busy = self.busy_tracker.busy or self._transient_busy
+        if busy == self._last_busy_state:
+            return
+        self._last_busy_state = busy
+        self.busy_changed.emit(busy)

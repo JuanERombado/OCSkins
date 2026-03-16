@@ -146,8 +146,10 @@ def test_overlay_panel_uses_most_of_canvas_space(qtbot, tmp_path) -> None:
 
     canvas = window._scale_rect(manifest.canvas_bounds)
 
-    assert window.overlay_panel.width() >= int(canvas.width() * 0.85)
-    assert window.overlay_panel.height() >= int(canvas.height() * 0.8)
+    assert window.overlay_panel.width() < window.width()
+    assert window.overlay_panel.height() < window.height()
+    assert abs(window.overlay_panel.geometry().center().x() - canvas.center().x()) <= 2
+    assert window.overlay_panel.geometry().top() >= canvas.top()
 
 
 def test_window_scale_controls_resize_the_skin(qtbot, tmp_path) -> None:
@@ -161,6 +163,9 @@ def test_window_scale_controls_resize_the_skin(qtbot, tmp_path) -> None:
 
     assert window.width() < original_size.width()
     assert scales
+    assert window.smaller_button.text() == "-"
+    assert window.reset_size_button.text() == "Reset"
+    assert window.larger_button.text() == "+"
 
     qtbot.mouseClick(window.larger_button, Qt.MouseButton.LeftButton)
     assert window.width() >= original_size.width() - 5

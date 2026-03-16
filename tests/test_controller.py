@@ -11,6 +11,7 @@ class FakeGatewayClient(QObject):
     connection_state_changed = Signal(object)
     snapshot_received = Signal(object)
     agent_event_received = Signal(str, str, object)
+    activity_detected = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -100,3 +101,19 @@ def test_controller_persists_window_scale(tmp_path) -> None:
 
     reloaded = AppSettingsStore(tmp_path / "settings.json")
     assert reloaded.settings.window_scale == 0.82
+
+
+def test_controller_marks_busy_during_gateway_activity(tmp_path, qtbot) -> None:
+    store = AppSettingsStore(tmp_path / "settings.json")
+    fake_gateway = FakeGatewayClient()
+    controller = OpenClawController(store, gateway_client=fake_gateway, cli_bridge=FakeCliBridge())
+    busy_states: list[bool] = []
+    controller.busy_changed.connect(busy_states.append)
+
+    fake_gateway.activity_detected.emit("usage")
+
+    assert busy_states == [True]
+
+    qtbot.wait(1500)
+
+    assert busy_states[-1] is False

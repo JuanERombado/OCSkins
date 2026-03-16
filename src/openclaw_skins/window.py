@@ -109,7 +109,7 @@ class SkinHostWindow(QWidget):
         self.overlay_panel.setObjectName("OverlayPanel")
 
         panel_layout = QVBoxLayout(self.overlay_panel)
-        panel_layout.setContentsMargins(32, 28, 32, 24)
+        panel_layout.setContentsMargins(38, 30, 38, 24)
         panel_layout.setSpacing(18)
 
         self.panel_title = QLabel(manifest.display_name)
@@ -135,9 +135,11 @@ class SkinHostWindow(QWidget):
 
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(12)
+        button_row.setSpacing(14)
         self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.setObjectName("SecondaryButton")
         self.restart_button = QPushButton("Restart Gateway")
+        self.restart_button.setObjectName("PrimaryButton")
         self.refresh_button.clicked.connect(self.refresh_requested.emit)
         self.restart_button.clicked.connect(self.restart_requested.emit)
         button_row.addWidget(self.refresh_button)
@@ -163,9 +165,12 @@ class SkinHostWindow(QWidget):
         self.scale_label.setToolTip("Use the size buttons, Ctrl+mouse wheel, or drag the lower-right corner.")
         utility_row.addWidget(self.scale_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.smaller_button = QPushButton("Smaller")
-        self.reset_size_button = QPushButton("Reset Size")
-        self.larger_button = QPushButton("Larger")
+        self.smaller_button = QPushButton("-")
+        self.smaller_button.setObjectName("UtilityButton")
+        self.reset_size_button = QPushButton("Reset")
+        self.reset_size_button.setObjectName("UtilityButton")
+        self.larger_button = QPushButton("+")
+        self.larger_button.setObjectName("UtilityButton")
         self.smaller_button.clicked.connect(lambda: self.adjust_window_scale(-self._scale_step))
         self.reset_size_button.clicked.connect(self.reset_window_scale)
         self.larger_button.clicked.connect(lambda: self.adjust_window_scale(self._scale_step))
@@ -341,17 +346,24 @@ class SkinHostWindow(QWidget):
 
     def _overlay_rect(self) -> QRect:
         canvas = self._scale_rect(self.manifest.canvas_bounds)
-        inset_x = max(18, round(canvas.width() * 0.035))
-        inset_y = max(18, round(canvas.height() * 0.05))
-        rect = canvas.adjusted(inset_x, inset_y, -inset_x, -inset_y)
-        min_width = min(self.width() - 24, max(320, round(canvas.width() * 0.85)))
-        min_height = min(self.height() - 24, max(190, round(canvas.height() * 0.8)))
+        inset_x = max(48, round(canvas.width() * 0.09))
+        inset_y_top = max(48, round(canvas.height() * 0.1))
+        inset_y_bottom = max(42, round(canvas.height() * 0.14))
+        target_width = max(360, round(canvas.width() * 0.72))
+        target_height = max(260, round(canvas.height() * 0.64))
+        centered_x = canvas.x() + (canvas.width() - target_width) // 2
+        centered_y = canvas.y() + max(0, round(canvas.height() * 0.06))
+        rect = QRect(centered_x, centered_y, target_width, target_height)
+        inner_bounds = canvas.adjusted(inset_x, inset_y_top, -inset_x, -inset_y_bottom)
+        rect = rect.intersected(inner_bounds)
+        min_width = max(320, round(canvas.width() * 0.54))
+        min_height = max(220, round(canvas.height() * 0.48))
         if rect.width() < min_width:
-            expand = min_width - rect.width()
-            rect.adjust(-(expand // 2), 0, expand - (expand // 2), 0)
+            rect.setWidth(min_width)
+            rect.moveLeft(canvas.x() + (canvas.width() - rect.width()) // 2)
         if rect.height() < min_height:
-            expand = min_height - rect.height()
-            rect.adjust(0, -(expand // 2), 0, expand - (expand // 2))
+            rect.setHeight(min_height)
+            rect.moveTop(canvas.y() + max(0, round(canvas.height() * 0.09)))
         return rect.intersected(QRect(12, 12, self.width() - 24, self.height() - 24))
 
     def _apply_frame(self, index: int) -> None:

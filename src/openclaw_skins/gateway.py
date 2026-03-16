@@ -155,6 +155,7 @@ class OpenClawGatewayClient(QObject):
     connection_state_changed = Signal(object)
     snapshot_received = Signal(object)
     agent_event_received = Signal(str, str, object)
+    activity_detected = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -306,6 +307,8 @@ class OpenClawGatewayClient(QObject):
                 return
 
             self._touch_alive()
+            if event and event not in {"tick", "presence", "health"}:
+                self.activity_detected.emit(event)
             if event == "agent" and isinstance(payload, dict):
                 run_id = str(payload.get("runId", "")).strip()
                 stream = str(payload.get("stream", "")).strip()
