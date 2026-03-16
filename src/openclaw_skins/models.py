@@ -74,6 +74,7 @@ class AppSettings:
     selected_skin: str = DEFAULT_SKIN_ID
     window_position: Point | None = None
     always_on_top: bool = False
+    window_scale: float = 1.0
 
     @classmethod
     def from_dict(cls, raw: object) -> "AppSettings":
@@ -85,6 +86,7 @@ class AppSettings:
         cli_command = raw.get("cli_command")
         selected_skin = raw.get("selected_skin")
         always_on_top = raw.get("always_on_top")
+        window_scale = raw.get("window_scale")
         if isinstance(gateway_url, str) and gateway_url.strip():
             settings.gateway_url = gateway_url.strip()
         if isinstance(gateway_token, str):
@@ -95,6 +97,8 @@ class AppSettings:
             settings.selected_skin = selected_skin.strip()
         if isinstance(always_on_top, bool):
             settings.always_on_top = always_on_top
+        if isinstance(window_scale, (int, float)):
+            settings.window_scale = max(0.2, min(float(window_scale), 4.0))
         settings.window_position = Point.from_dict(raw.get("window_position"))
         return settings
 
@@ -106,7 +110,15 @@ class AppSettings:
             "selected_skin": self.selected_skin,
             "window_position": self.window_position.to_dict() if self.window_position else None,
             "always_on_top": self.always_on_top,
+            "window_scale": self.window_scale,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayAuthDiscovery:
+    gateway_url: str = DEFAULT_GATEWAY_URL
+    gateway_token: str = ""
+    bootstrap_token: str = ""
 
 
 @dataclass(slots=True)

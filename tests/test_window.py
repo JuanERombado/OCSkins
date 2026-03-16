@@ -148,3 +148,31 @@ def test_overlay_panel_uses_most_of_canvas_space(qtbot, tmp_path) -> None:
 
     assert window.overlay_panel.width() >= int(canvas.width() * 0.85)
     assert window.overlay_panel.height() >= int(canvas.height() * 0.8)
+
+
+def test_window_scale_controls_resize_the_skin(qtbot, tmp_path) -> None:
+    window = SkinHostWindow(build_manifest(tmp_path), tmp_path / "missing-icon.png")
+    qtbot.addWidget(window)
+    scales: list[float] = []
+    window.window_scale_changed.connect(scales.append)
+    original_size = window.size()
+
+    qtbot.mouseClick(window.smaller_button, Qt.MouseButton.LeftButton)
+
+    assert window.width() < original_size.width()
+    assert scales
+
+    qtbot.mouseClick(window.larger_button, Qt.MouseButton.LeftButton)
+    assert window.width() >= original_size.width() - 5
+
+
+def test_window_resize_updates_overlay_geometry(qtbot, tmp_path) -> None:
+    manifest = build_manifest(tmp_path)
+    window = SkinHostWindow(manifest, tmp_path / "missing-icon.png", initial_scale=0.6)
+    qtbot.addWidget(window)
+    original_overlay_width = window.overlay_panel.width()
+
+    window.set_window_scale(0.8, emit_signal=False)
+
+    assert window.overlay_panel.width() > original_overlay_width
+    assert window.background_label.width() == window.width()

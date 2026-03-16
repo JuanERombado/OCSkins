@@ -23,5 +23,17 @@ def local_app_data_dir() -> Path:
     return Path.home() / "AppData" / "Local" / APP_VENDOR
 
 
+def identity_data_dir() -> Path:
+    return local_app_data_dir() / "identity"
+
+
 def default_settings_path() -> Path:
     return local_app_data_dir() / "settings.json"
+
+
+def default_device_identity_path() -> Path:
+    return identity_data_dir() / "device.json"
+
+
+def default_device_auth_store_path() -> Path:
+    return identity_data_dir() / "device-auth.json"

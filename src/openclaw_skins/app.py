@@ -37,6 +37,7 @@ def run() -> int:
         manifest=manifest,
         icon_path=icon_path,
         always_on_top=settings.always_on_top,
+        initial_scale=settings.window_scale,
     )
 
     controller.connection_state_changed.connect(window.apply_connection_state)
@@ -47,6 +48,7 @@ def run() -> int:
     window.refresh_requested.connect(controller.refresh)
     window.restart_requested.connect(controller.restart_gateway)
     window.always_on_top_toggled.connect(controller.set_always_on_top)
+    window.window_scale_changed.connect(controller.set_window_scale)
     app.aboutToQuit.connect(window.prepare_to_quit)
     app.aboutToQuit.connect(controller.shutdown)
     app.aboutToQuit.connect(lambda: controller.save_window_position(window.x(), window.y()))

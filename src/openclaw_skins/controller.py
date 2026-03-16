@@ -43,12 +43,16 @@ class OpenClawController(QObject):
 
     def refresh(self) -> None:
         settings = self.settings_store.settings
-        gateway_token = self.cli_bridge.discover_gateway_token(settings)
+        auth = self.cli_bridge.discover_gateway_auth(settings)
         self.busy_tracker.clear()
         self.busy_changed.emit(False)
         if self.cli_bridge.check_gateway_status(settings):
             self.action_running_changed.emit("status", True)
-        self.gateway_client.start(settings.gateway_url, gateway_token)
+        self.gateway_client.start(
+            auth.gateway_url or settings.gateway_url,
+            auth.gateway_token,
+            auth.bootstrap_token,
+        )
 
     def restart_gateway(self) -> None:
         if not self._service_status.can_restart:
@@ -59,6 +63,9 @@ class OpenClawController(QObject):
 
     def set_always_on_top(self, enabled: bool) -> None:
         self.settings_store.update(always_on_top=enabled)
+
+    def set_window_scale(self, scale: float) -> None:
+        self.settings_store.update(window_scale=scale)
 
     def save_window_position(self, x: int, y: int) -> None:
         self.settings_store.update(window_position=Point(x=x, y=y))

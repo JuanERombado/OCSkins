@@ -13,6 +13,7 @@ authors = [
   { name = "Juan's Open Source Apps" }
 ]
 dependencies = [
+  "cryptography>=45.0.0",
   "PySide6>=6.10.0",
 ]
 
@@ -35,4 +36,3 @@ qt_api = "pyside6"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

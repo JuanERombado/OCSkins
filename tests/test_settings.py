@@ -18,10 +18,11 @@ def test_settings_store_persists_changes(tmp_path) -> None:
         gateway_url="ws://10.0.0.4:18789",
         cli_command="wsl openclaw",
         window_position=Point(x=120, y=220),
+        window_scale=0.78,
     )
 
     reloaded = AppSettingsStore(settings_path)
     assert reloaded.settings.gateway_url == "ws://10.0.0.4:18789"
     assert reloaded.settings.cli_command == "wsl openclaw"
     assert reloaded.settings.window_position == Point(x=120, y=220)
-
+    assert reloaded.settings.window_scale == 0.78

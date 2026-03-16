@@ -48,6 +48,11 @@ def build_stylesheet(theme: ThemeTokens) -> str:
         font-size: 15px;
         font-weight: 600;
     }}
+    QLabel#ScaleLabel {{
+        color: {theme.text_muted};
+        font-size: 15px;
+        font-weight: 600;
+    }}
     QPushButton {{
         background: rgba(255, 255, 255, 22);
         color: {theme.text};

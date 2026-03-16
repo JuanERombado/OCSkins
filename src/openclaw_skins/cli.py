@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
 import re
 import shlex
 import subprocess
+from urllib.parse import parse_qs, urlparse
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
-from openclaw_skins.models import AppSettings, GatewayServiceStatus
+from openclaw_skins.models import AppSettings, GatewayAuthDiscovery, GatewayServiceStatus
 
 
 def split_cli_command(command: str) -> tuple[str, list[str]]:
@@ -18,43 +21,165 @@ def split_cli_command(command: str) -> tuple[str, list[str]]:
     return cleaned[0], cleaned[1:]
 
 
-def discover_gateway_token(settings: AppSettings, timeout_seconds: float = 4.0) -> str:
-    explicit_token = settings.gateway_token.strip()
-    if explicit_token:
-        return explicit_token
+def _sanitize_token(candidate: str) -> str:
+    value = candidate.strip()
+    if not value:
+        return ""
+    if value.startswith("${") and value.endswith("}"):
+        return ""
+    if value.lower() in {"null", "none", "undefined"}:
+        return ""
+    return value
 
-    for env_name in ("OPENCLAW_GATEWAY_TOKEN", "CLAWDBOT_GATEWAY_TOKEN"):
-        env_value = os.environ.get(env_name, "").strip()
-        if env_value:
-            return env_value
 
+def _run_cli_command(
+    settings: AppSettings,
+    extra_args: list[str],
+    timeout_seconds: float = 4.0,
+) -> subprocess.CompletedProcess[str] | None:
     try:
         program, base_args = split_cli_command(settings.cli_command)
     except ValueError:
-        return ""
+        return None
 
     try:
-        completed = subprocess.run(
-            [program, *base_args, "config", "get", "gateway.auth.token"],
+        return subprocess.run(
+            [program, *base_args, *extra_args],
             capture_output=True,
             check=False,
             text=True,
             timeout=timeout_seconds,
         )
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return None
 
-    if completed.returncode != 0:
-        return ""
 
-    candidate = completed.stdout.strip()
-    if not candidate:
+def parse_dashboard_output(output: str) -> GatewayAuthDiscovery:
+    match = re.search(r"^Dashboard URL:\s*(.+)$", output, re.IGNORECASE | re.MULTILINE)
+    if not match:
+        return GatewayAuthDiscovery()
+    dashboard_url = match.group(1).strip()
+    try:
+        parsed = urlparse(dashboard_url)
+    except ValueError:
+        return GatewayAuthDiscovery()
+    scheme = parsed.scheme.lower()
+    if scheme == "http":
+        gateway_scheme = "ws"
+    elif scheme == "https":
+        gateway_scheme = "wss"
+    elif scheme in {"ws", "wss"}:
+        gateway_scheme = scheme
+    else:
+        return GatewayAuthDiscovery()
+    if not parsed.hostname:
+        return GatewayAuthDiscovery()
+    port = f":{parsed.port}" if parsed.port else ""
+    fragment_params = parse_qs(parsed.fragment, keep_blank_values=True)
+    token = _sanitize_token(fragment_params.get("token", [""])[0])
+    return GatewayAuthDiscovery(
+        gateway_url=f"{gateway_scheme}://{parsed.hostname}{port}",
+        gateway_token=token,
+        bootstrap_token="",
+    )
+
+
+def decode_pairing_setup_code(setup_code: str) -> dict[str, str] | None:
+    raw_code = setup_code.strip()
+    if not raw_code:
+        return None
+    padded = raw_code + ("=" * ((4 - (len(raw_code) % 4)) % 4))
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    url = payload.get("url")
+    bootstrap_token = payload.get("bootstrapToken")
+    if not isinstance(url, str) or not isinstance(bootstrap_token, str):
+        return None
+    if not url.strip() or not bootstrap_token.strip():
+        return None
+    return {"url": url.strip(), "bootstrapToken": bootstrap_token.strip()}
+
+
+def discover_gateway_bootstrap_token(
+    settings: AppSettings,
+    gateway_url: str,
+    timeout_seconds: float = 6.0,
+) -> str:
+    if not gateway_url.strip():
         return ""
-    if candidate.startswith("${") and candidate.endswith("}"):
+    completed = _run_cli_command(
+        settings,
+        ["qr", "--setup-code-only", "--url", gateway_url.strip()],
+        timeout_seconds=timeout_seconds,
+    )
+    if completed is None or completed.returncode != 0:
         return ""
-    if candidate.lower() in {"null", "none", "undefined"}:
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    if not lines:
         return ""
-    return candidate
+    payload = decode_pairing_setup_code(lines[-1])
+    if payload is None:
+        return ""
+    return _sanitize_token(payload.get("bootstrapToken", ""))
+
+
+def discover_gateway_auth(settings: AppSettings, timeout_seconds: float = 4.0) -> GatewayAuthDiscovery:
+    resolved_url = settings.gateway_url.strip()
+    explicit_token = _sanitize_token(settings.gateway_token)
+    if explicit_token:
+        return GatewayAuthDiscovery(gateway_url=resolved_url, gateway_token=explicit_token)
+
+    for env_name in ("OPENCLAW_GATEWAY_TOKEN", "CLAWDBOT_GATEWAY_TOKEN"):
+        env_value = _sanitize_token(os.environ.get(env_name, ""))
+        if env_value:
+            return GatewayAuthDiscovery(gateway_url=resolved_url, gateway_token=env_value)
+
+    config_completed = _run_cli_command(
+        settings,
+        ["config", "get", "gateway.auth.token"],
+        timeout_seconds=timeout_seconds,
+    )
+    if config_completed is not None and config_completed.returncode == 0:
+        config_token = _sanitize_token(config_completed.stdout)
+        if config_token:
+            return GatewayAuthDiscovery(gateway_url=resolved_url, gateway_token=config_token)
+
+    dashboard_completed = _run_cli_command(
+        settings,
+        ["dashboard", "--no-open"],
+        timeout_seconds=timeout_seconds,
+    )
+    dashboard = GatewayAuthDiscovery(gateway_url=resolved_url)
+    if dashboard_completed is not None and dashboard_completed.returncode == 0:
+        dashboard = parse_dashboard_output(dashboard_completed.stdout)
+        if dashboard.gateway_url:
+            resolved_url = dashboard.gateway_url
+        if dashboard.gateway_token:
+            return GatewayAuthDiscovery(
+                gateway_url=resolved_url,
+                gateway_token=dashboard.gateway_token,
+                bootstrap_token="",
+            )
+
+    bootstrap_token = discover_gateway_bootstrap_token(
+        settings,
+        resolved_url,
+        timeout_seconds=max(timeout_seconds, 6.0),
+    )
+    return GatewayAuthDiscovery(
+        gateway_url=resolved_url,
+        gateway_token="",
+        bootstrap_token=bootstrap_token,
+    )
+
+
+def discover_gateway_token(settings: AppSettings, timeout_seconds: float = 4.0) -> str:
+    return discover_gateway_auth(settings, timeout_seconds=timeout_seconds).gateway_token
 
 
 def parse_gateway_status_output(output: str) -> GatewayServiceStatus:
@@ -131,6 +256,9 @@ class OpenClawCliBridge(QObject):
 
     def discover_gateway_token(self, settings: AppSettings) -> str:
         return discover_gateway_token(settings)
+
+    def discover_gateway_auth(self, settings: AppSettings) -> GatewayAuthDiscovery:
+        return discover_gateway_auth(settings)
 
     def cancel(self) -> None:
         if self._process is not None:

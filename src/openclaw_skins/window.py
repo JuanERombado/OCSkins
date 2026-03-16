@@ -3,7 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QMouseEvent, QPainter, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QColor,
+    QIcon,
+    QMouseEvent,
+    QPainter,
+    QPixmap,
+    QResizeEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -51,8 +61,16 @@ class SkinHostWindow(QWidget):
     refresh_requested = Signal()
     restart_requested = Signal()
     always_on_top_toggled = Signal(bool)
+    window_scale_changed = Signal(float)
 
-    def __init__(self, manifest: SkinManifest, icon_path: Path, always_on_top: bool = False, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        manifest: SkinManifest,
+        icon_path: Path,
+        always_on_top: bool = False,
+        initial_scale: float = 1.0,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.manifest = manifest
         self.design_size = QSize(*manifest.window_size)
@@ -63,6 +81,13 @@ class SkinHostWindow(QWidget):
         self._can_restart = False
         self._restart_tooltip = "Gateway service is not installed."
         self._always_on_top = always_on_top
+        self._window_scale = 1.0
+        self._resize_origin_global: QPoint | None = None
+        self._resize_origin_size = QSize()
+        self._resize_origin_scale = 1.0
+        self._resize_handle_size = 34
+        self._scale_step = 0.1
+        self._wheel_scale_step = 0.05
 
         self.setObjectName("RootWindow")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -71,24 +96,20 @@ class SkinHostWindow(QWidget):
             flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setWindowTitle(APP_NAME)
-        self.setFixedSize(self._resolve_window_size())
         self.setStyleSheet(build_stylesheet(ThemeTokens()))
 
         self.frames = [QPixmap(str(path)) for path in manifest.frame_paths]
         self.current_frame_index = manifest.idle_frame
 
         self.background_label = QLabel(self)
-        self.background_label.setGeometry(0, 0, self.width(), self.height())
         self.background_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.background_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._apply_frame(self.current_frame_index)
 
         self.overlay_panel = QFrame(self)
         self.overlay_panel.setObjectName("OverlayPanel")
-        self.overlay_panel.setGeometry(self._overlay_rect())
 
         panel_layout = QVBoxLayout(self.overlay_panel)
-        panel_layout.setContentsMargins(32, 28, 32, 28)
+        panel_layout.setContentsMargins(32, 28, 32, 24)
         panel_layout.setSpacing(18)
 
         self.panel_title = QLabel(manifest.display_name)
@@ -128,9 +149,30 @@ class SkinHostWindow(QWidget):
         self.feedback_label.setWordWrap(True)
         panel_layout.addWidget(self.feedback_label)
 
+        utility_row = QHBoxLayout()
+        utility_row.setContentsMargins(0, 0, 0, 0)
+        utility_row.setSpacing(12)
+
         self.always_on_top_checkbox = QCheckBox("Always on top")
         self.always_on_top_checkbox.toggled.connect(self._handle_always_on_top_toggled)
-        panel_layout.addWidget(self.always_on_top_checkbox)
+        utility_row.addWidget(self.always_on_top_checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
+        utility_row.addStretch(1)
+
+        self.scale_label = QLabel("")
+        self.scale_label.setObjectName("ScaleLabel")
+        self.scale_label.setToolTip("Use the size buttons, Ctrl+mouse wheel, or drag the lower-right corner.")
+        utility_row.addWidget(self.scale_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.smaller_button = QPushButton("Smaller")
+        self.reset_size_button = QPushButton("Reset Size")
+        self.larger_button = QPushButton("Larger")
+        self.smaller_button.clicked.connect(lambda: self.adjust_window_scale(-self._scale_step))
+        self.reset_size_button.clicked.connect(self.reset_window_scale)
+        self.larger_button.clicked.connect(lambda: self.adjust_window_scale(self._scale_step))
+        utility_row.addWidget(self.smaller_button)
+        utility_row.addWidget(self.reset_size_button)
+        utility_row.addWidget(self.larger_button)
+        panel_layout.addLayout(utility_row)
 
         self.animation_timer = QTimer(self)
         self.animation_timer.setInterval(manifest.animation_interval_ms)
@@ -140,6 +182,7 @@ class SkinHostWindow(QWidget):
             self._create_tray(icon_path)
 
         self.set_always_on_top(always_on_top, emit_signal=False)
+        self.set_window_scale(initial_scale, emit_signal=False, anchor="top-left")
         self.apply_service_status(GatewayServiceStatus())
         self.apply_connection_state(GatewayConnectionState())
 
@@ -201,23 +244,92 @@ class SkinHostWindow(QWidget):
         if emit_signal:
             self.always_on_top_toggled.emit(enabled)
 
+    def set_window_scale(
+        self,
+        scale: float,
+        *,
+        emit_signal: bool = True,
+        anchor: str = "center",
+    ) -> None:
+        clamped = self._clamp_scale(scale)
+        if abs(clamped - self._window_scale) < 0.001 and self.size() == self._size_for_scale(clamped):
+            self._sync_scale_ui()
+            return
+        current_geometry = self.geometry()
+        target_size = self._size_for_scale(clamped)
+        self._window_scale = clamped
+        self.resize(target_size)
+        if anchor == "top-left":
+            self.move(current_geometry.topLeft())
+        else:
+            center = current_geometry.center()
+            self.move(center.x() - target_size.width() // 2, center.y() - target_size.height() // 2)
+        self._update_window_layout()
+        self._sync_scale_ui()
+        if emit_signal:
+            self.window_scale_changed.emit(round(clamped, 3))
+
+    def adjust_window_scale(self, delta: float) -> None:
+        self.set_window_scale(self._window_scale + delta)
+
+    def reset_window_scale(self) -> None:
+        self.set_window_scale(self._default_scale())
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self._is_in_drag_region(event.position().toPoint()):
+        point = event.position().toPoint()
+        if event.button() == Qt.MouseButton.LeftButton and self._resize_handle_rect().contains(point):
+            self._resize_origin_global = event.globalPosition().toPoint()
+            self._resize_origin_size = self.size()
+            self._resize_origin_scale = self._window_scale
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self._is_in_drag_region(point):
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        point = event.position().toPoint()
+        if self._resize_origin_global is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            delta = event.globalPosition().toPoint() - self._resize_origin_global
+            width_scale = (self._resize_origin_size.width() + delta.x()) / self.design_size.width()
+            height_scale = (self._resize_origin_size.height() + delta.y()) / self.design_size.height()
+            self.set_window_scale(min(width_scale, height_scale), anchor="top-left")
+            event.accept()
+            return
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
             return
+        if self._resize_handle_rect().contains(point):
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        elif self.cursor().shape() == Qt.CursorShape.SizeFDiagCursor:
+            self.unsetCursor()
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag_offset = None
+        self._resize_origin_global = None
+        self._resize_origin_size = QSize()
+        if self._resize_handle_rect().contains(event.position().toPoint()):
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        else:
+            self.unsetCursor()
         super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = self._wheel_scale_step if event.angleDelta().y() > 0 else -self._wheel_scale_step
+            self.adjust_window_scale(delta)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_window_layout()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._quitting or self._tray_icon is None:
@@ -244,6 +356,9 @@ class SkinHostWindow(QWidget):
 
     def _apply_frame(self, index: int) -> None:
         pixmap = self.frames[index]
+        if pixmap.isNull():
+            self.background_label.clear()
+            return
         self.background_label.setPixmap(
             pixmap.scaled(
                 self.size(),
@@ -269,18 +384,28 @@ class SkinHostWindow(QWidget):
         self.restart_action = QAction("Restart Gateway", menu)
         self.always_on_top_action = QAction("Always on Top", menu)
         self.always_on_top_action.setCheckable(True)
+        self.smaller_action = QAction("Smaller", menu)
+        self.reset_size_action = QAction("Reset Size", menu)
+        self.larger_action = QAction("Larger", menu)
         quit_action = QAction("Quit", menu)
 
         self.show_hide_action.triggered.connect(self._toggle_visibility)
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         self.restart_action.triggered.connect(self.restart_requested.emit)
         self.always_on_top_action.toggled.connect(self._handle_always_on_top_toggled)
+        self.smaller_action.triggered.connect(lambda: self.adjust_window_scale(-self._scale_step))
+        self.reset_size_action.triggered.connect(self.reset_window_scale)
+        self.larger_action.triggered.connect(lambda: self.adjust_window_scale(self._scale_step))
         quit_action.triggered.connect(self._quit_from_tray)
 
         menu.addAction(self.show_hide_action)
         menu.addAction(self.refresh_action)
         menu.addAction(self.restart_action)
         menu.addAction(self.always_on_top_action)
+        menu.addSeparator()
+        menu.addAction(self.smaller_action)
+        menu.addAction(self.reset_size_action)
+        menu.addAction(self.larger_action)
         menu.addSeparator()
         menu.addAction(quit_action)
 
@@ -291,6 +416,7 @@ class SkinHostWindow(QWidget):
         self._tray_icon = tray
         self._sync_toggle_action()
         self._sync_restart_action()
+        self._sync_scale_ui()
 
     def _toggle_visibility(self) -> None:
         if self.isVisible():
@@ -327,23 +453,67 @@ class SkinHostWindow(QWidget):
             self.always_on_top_action.setChecked(enabled)
             self.always_on_top_action.blockSignals(False)
 
+    def _sync_scale_ui(self) -> None:
+        minimum_scale, maximum_scale = self._scale_bounds()
+        percent = round(self._window_scale * 100)
+        self.scale_label.setText(f"Size {percent}%")
+        self.smaller_button.setEnabled(self._window_scale > minimum_scale + 0.01)
+        self.larger_button.setEnabled(self._window_scale < maximum_scale - 0.01)
+        if hasattr(self, "smaller_action"):
+            self.smaller_action.setEnabled(self.smaller_button.isEnabled())
+            self.larger_action.setEnabled(self.larger_button.isEnabled())
+
     def _handle_always_on_top_toggled(self, enabled: bool) -> None:
         if enabled == self._always_on_top:
             self._sync_always_on_top_ui(enabled)
             return
         self.set_always_on_top(enabled, emit_signal=True)
 
-    def _resolve_window_size(self) -> QSize:
-        screen = QApplication.primaryScreen()
+    def _update_window_layout(self) -> None:
+        self.background_label.setGeometry(0, 0, self.width(), self.height())
+        self.overlay_panel.setGeometry(self._overlay_rect())
+        self._apply_frame(self.current_frame_index)
+
+    def _default_scale(self) -> float:
+        screen = self.screen() or QApplication.primaryScreen()
         if screen is None:
-            return self.design_size
+            return 1.0
         available = screen.availableGeometry()
         width_ratio = (available.width() * 0.88) / self.design_size.width()
         height_ratio = (available.height() * 0.88) / self.design_size.height()
-        scale = min(width_ratio, height_ratio, 1.0)
+        return min(width_ratio, height_ratio, 1.0)
+
+    def _scale_bounds(self) -> tuple[float, float]:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return (0.35, 1.25)
+        available = screen.availableGeometry()
+        max_scale = min(
+            (available.width() * 0.96) / self.design_size.width(),
+            (available.height() * 0.96) / self.design_size.height(),
+            1.6,
+        )
+        max_scale = max(0.3, max_scale)
+        min_scale = min(0.35, max_scale)
+        return (min_scale, max_scale)
+
+    def _clamp_scale(self, scale: float) -> float:
+        minimum_scale, maximum_scale = self._scale_bounds()
+        return max(minimum_scale, min(maximum_scale, scale if scale > 0 else self._default_scale()))
+
+    def _size_for_scale(self, scale: float) -> QSize:
+        clamped = self._clamp_scale(scale)
         return QSize(
-            max(420, int(self.design_size.width() * scale)),
-            max(260, int(self.design_size.height() * scale)),
+            max(220, int(self.design_size.width() * clamped)),
+            max(150, int(self.design_size.height() * clamped)),
+        )
+
+    def _resize_handle_rect(self) -> QRect:
+        return QRect(
+            max(0, self.width() - self._resize_handle_size),
+            max(0, self.height() - self._resize_handle_size),
+            self._resize_handle_size,
+            self._resize_handle_size,
         )
 
     def _scale_x(self, value: int) -> int:

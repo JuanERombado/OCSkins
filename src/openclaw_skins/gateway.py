@@ -18,6 +18,13 @@ from openclaw_skins.config import (
     PROTOCOL_VERSION,
     RECONNECT_DELAY_MS,
 )
+from openclaw_skins.device_auth import clear_device_auth_token, load_device_auth_token, store_device_auth_token
+from openclaw_skins.identity import (
+    DeviceIdentity,
+    load_or_create_device_identity,
+    public_key_raw_base64url_from_pem,
+    sign_device_payload,
+)
 from openclaw_skins.models import GatewayConnectionState
 
 
@@ -25,31 +32,122 @@ def monotonic_ms() -> int:
     return time.monotonic_ns() // 1_000_000
 
 
-def build_connect_params(token: str) -> dict[str, object]:
+def normalize_device_metadata_for_auth(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized_chars: list[str] = []
+    for char in value.strip():
+        code = ord(char)
+        normalized_chars.append(chr(code + 32) if 65 <= code <= 90 else char)
+    return "".join(normalized_chars)
+
+
+def build_device_auth_payload_v3(
+    *,
+    device_id: str,
+    client_id: str,
+    client_mode: str,
+    role: str,
+    scopes: list[str],
+    signed_at_ms: int,
+    token: str,
+    nonce: str,
+    platform_label: str,
+    device_family: str,
+) -> str:
+    return "|".join(
+        [
+            "v3",
+            device_id,
+            client_id,
+            client_mode,
+            role,
+            ",".join(scopes),
+            str(signed_at_ms),
+            token,
+            nonce,
+            normalize_device_metadata_for_auth(platform_label),
+            normalize_device_metadata_for_auth(device_family),
+        ]
+    )
+
+
+def build_connect_params(
+    *,
+    gateway_token: str = "",
+    bootstrap_token: str = "",
+    device_token: str = "",
+    device_identity: DeviceIdentity | None = None,
+    nonce: str = "",
+) -> dict[str, object]:
     locale_code = locale.getlocale()[0] or "en_US"
     normalized_locale = locale_code.replace("_", "-")
-    platform_label = platform.platform()
+    platform_label = platform.system() or platform.platform()
+    device_family = "desktop"
     instance_suffix = platform.node().strip().lower().replace(" ", "-") or "desktop"
+    client_id = "gateway-client"
+    client_mode = "backend"
+    role = "operator"
+    scopes = ["operator.read"]
+
     params: dict[str, object] = {
         "minProtocol": PROTOCOL_VERSION,
         "maxProtocol": PROTOCOL_VERSION,
         "client": {
-            "id": "gateway-client",
+            "id": client_id,
             "displayName": APP_NAME,
             "version": APP_VERSION,
             "platform": platform_label,
-            "mode": "backend",
+            "deviceFamily": device_family,
+            "mode": client_mode,
             "instanceId": f"{APP_SLUG}-{instance_suffix}",
         },
         "caps": [],
-        "role": "operator",
-        "scopes": ["operator.read"],
+        "role": role,
+        "scopes": scopes,
         "locale": normalized_locale,
         "userAgent": f"{APP_NAME}/{APP_VERSION} ({platform_label})",
     }
-    trimmed_token = token.strip()
-    if trimmed_token:
-        params["auth"] = {"token": trimmed_token}
+
+    trimmed_gateway_token = gateway_token.strip()
+    trimmed_bootstrap_token = bootstrap_token.strip()
+    trimmed_device_token = device_token.strip()
+    signature_token = ""
+    auth_payload: dict[str, str] = {}
+    if trimmed_gateway_token:
+        auth_payload["token"] = trimmed_gateway_token
+        signature_token = trimmed_gateway_token
+    elif trimmed_device_token:
+        auth_payload["token"] = trimmed_device_token
+        signature_token = trimmed_device_token
+    elif trimmed_bootstrap_token:
+        auth_payload["bootstrapToken"] = trimmed_bootstrap_token
+        signature_token = trimmed_bootstrap_token
+    if auth_payload:
+        params["auth"] = auth_payload
+
+    trimmed_nonce = nonce.strip()
+    if device_identity is not None and trimmed_nonce:
+        signed_at_ms = int(time.time() * 1000)
+        payload = build_device_auth_payload_v3(
+            device_id=device_identity.device_id,
+            client_id=client_id,
+            client_mode=client_mode,
+            role=role,
+            scopes=scopes,
+            signed_at_ms=signed_at_ms,
+            token=signature_token,
+            nonce=trimmed_nonce,
+            platform_label=platform_label,
+            device_family=device_family,
+        )
+        params["device"] = {
+            "id": device_identity.device_id,
+            "publicKey": public_key_raw_base64url_from_pem(device_identity.public_key_pem),
+            "signature": sign_device_payload(device_identity.private_key_pem, payload),
+            "signedAt": signed_at_ms,
+            "nonce": trimmed_nonce,
+        }
     return params
 
 
@@ -63,6 +161,7 @@ class OpenClawGatewayClient(QObject):
         self._socket: QWebSocket | None = None
         self._desired_url = ""
         self._desired_token = ""
+        self._desired_bootstrap_token = ""
         self._manual_stop = False
         self._connect_request_id: str | None = None
         self._handshake_complete = False
@@ -70,6 +169,7 @@ class OpenClawGatewayClient(QObject):
         self._last_error = ""
         self._tick_interval_ms = DEFAULT_TICK_INTERVAL_MS
         self._state = GatewayConnectionState()
+        self._device_identity = load_or_create_device_identity()
 
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setSingleShot(True)
@@ -80,9 +180,10 @@ class OpenClawGatewayClient(QObject):
         self._liveness_timer.timeout.connect(self._refresh_liveness)
         self._liveness_timer.start()
 
-    def start(self, url: str, token: str = "") -> None:
+    def start(self, url: str, token: str = "", bootstrap_token: str = "") -> None:
         self._desired_url = url.strip()
         self._desired_token = token.strip()
+        self._desired_bootstrap_token = bootstrap_token.strip()
         self._manual_stop = False
         self._reconnect_timer.stop()
         self._connect_socket()
@@ -226,6 +327,8 @@ class OpenClawGatewayClient(QObject):
                     else "Gateway handshake failed."
                 )
                 self._last_error = message
+                if "device token mismatch" in message.lower():
+                    clear_device_auth_token(self._device_identity.device_id, "operator")
                 self._emit_state(
                     transport_connected=False,
                     handshake_complete=False,
@@ -237,15 +340,25 @@ class OpenClawGatewayClient(QObject):
                 if self._socket is not None:
                     self._socket.abort()
 
-    def _send_connect(self, _nonce: str) -> None:
+    def _send_connect(self, nonce: str) -> None:
         if self._socket is None:
             return
         self._connect_request_id = str(uuid.uuid4())
+        stored_device_token = ""
+        stored_entry = load_device_auth_token(self._device_identity.device_id, "operator")
+        if stored_entry is not None:
+            stored_device_token = stored_entry.token
         frame = {
             "type": "req",
             "id": self._connect_request_id,
             "method": "connect",
-            "params": build_connect_params(self._desired_token),
+            "params": build_connect_params(
+                gateway_token=self._desired_token,
+                bootstrap_token=self._desired_bootstrap_token,
+                device_token=stored_device_token,
+                device_identity=self._device_identity,
+                nonce=nonce,
+            ),
         }
         self._socket.sendTextMessage(json.dumps(frame))
 
@@ -256,6 +369,18 @@ class OpenClawGatewayClient(QObject):
             tick_interval = policy.get("tickIntervalMs")
             if isinstance(tick_interval, int) and tick_interval > 0:
                 self._tick_interval_ms = tick_interval
+        auth_info = payload.get("auth", {})
+        if isinstance(auth_info, dict):
+            device_token = auth_info.get("deviceToken")
+            role = auth_info.get("role")
+            scopes = auth_info.get("scopes")
+            if isinstance(device_token, str) and device_token.strip():
+                store_device_auth_token(
+                    self._device_identity.device_id,
+                    role.strip() if isinstance(role, str) else "operator",
+                    device_token.strip(),
+                    scopes if isinstance(scopes, list) else None,
+                )
         snapshot = payload.get("snapshot", {})
         self.snapshot_received.emit(snapshot if isinstance(snapshot, dict) else {})
         self._touch_alive()
