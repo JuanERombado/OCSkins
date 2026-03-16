@@ -1,0 +1,32 @@
+{
+  "id": "crab",
+  "display_name": "Crab Monitor",
+  "frames": [
+    "../../sourcePNG/openclaw-skin-closed.png",
+    "../../sourcePNG/openclaw-skin-open.png"
+  ],
+  "window_size": {
+    "width": 2816,
+    "height": 1536
+  },
+  "canvas_bounds": {
+    "x": 520,
+    "y": 170,
+    "width": 1780,
+    "height": 980
+  },
+  "drag_regions": [
+    {
+      "x": 0,
+      "y": 0,
+      "width": 2816,
+      "height": 1536
+    }
+  ],
+  "idle_frame": 0,
+  "animation_interval_ms": 350,
+  "overlay_anchor": {
+    "x": 1198,
+    "y": 228
+  }
+}

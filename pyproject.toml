@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openclaw-skins"
+version = "0.1.0"
+description = "Windows desktop skin host for OpenClaw gateway monitoring."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [
+  { name = "Juan's Open Source Apps" }
+]
+dependencies = [
+  "PySide6>=6.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "Pillow>=11.3.0",
+  "pyinstaller>=6.11.0",
+  "pytest>=8.3.0",
+  "pytest-qt>=4.4.0",
+]
+
+[project.scripts]
+openclaw-skins = "openclaw_skins.app:run"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra"
+qt_api = "pyside6"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
