@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from urllib.parse import parse_qs, urlparse
 
@@ -21,6 +22,30 @@ def split_cli_command(command: str) -> tuple[str, list[str]]:
     return cleaned[0], cleaned[1:]
 
 
+def resolve_cli_invocation(command: str) -> tuple[str, list[str]]:
+    program, base_args = split_cli_command(command)
+    if os.name != "nt":
+        return program, base_args
+
+    candidate_paths = [program]
+    if not os.path.splitext(program)[1]:
+        candidate_paths.extend([f"{program}.cmd", f"{program}.exe", f"{program}.ps1", f"{program}.bat"])
+
+    resolved = ""
+    for candidate in candidate_paths:
+        found = shutil.which(candidate)
+        if found:
+            resolved = found
+            break
+    program = resolved or program
+    suffix = os.path.splitext(program)[1].lower()
+    if suffix == ".ps1":
+        return "powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", program, *base_args]
+    if suffix in {".cmd", ".bat"}:
+        return os.environ.get("COMSPEC", "cmd.exe"), ["/c", program, *base_args]
+    return program, base_args
+
+
 def _sanitize_token(candidate: str) -> str:
     value = candidate.strip()
     if not value:
@@ -28,6 +53,8 @@ def _sanitize_token(candidate: str) -> str:
     if value.startswith("${") and value.endswith("}"):
         return ""
     if value.lower() in {"null", "none", "undefined"}:
+        return ""
+    if "redacted" in value.lower():
         return ""
     return value
 
@@ -38,7 +65,7 @@ def _run_cli_command(
     timeout_seconds: float = 4.0,
 ) -> subprocess.CompletedProcess[str] | None:
     try:
-        program, base_args = split_cli_command(settings.cli_command)
+        program, base_args = resolve_cli_invocation(settings.cli_command)
     except ValueError:
         return None
 
@@ -269,7 +296,7 @@ class OpenClawCliBridge(QObject):
     def _start(self, name: str, settings: AppSettings, extra_args: list[str]) -> bool:
         if self._process is not None:
             return False
-        program, base_args = split_cli_command(settings.cli_command)
+        program, base_args = resolve_cli_invocation(settings.cli_command)
         process = QProcess(self)
         process.setProgram(program)
         process.setArguments(base_args + extra_args)

@@ -8,6 +8,7 @@ from openclaw_skins.cli import (
     discover_gateway_token,
     parse_dashboard_output,
     parse_gateway_status_output,
+    resolve_cli_invocation,
     split_cli_command,
 )
 from openclaw_skins.models import AppSettings, GatewayAuthDiscovery
@@ -51,6 +52,22 @@ def test_split_cli_command_supports_wrapped_commands() -> None:
     program, args = split_cli_command("wsl openclaw")
     assert program == "wsl"
     assert args == ["openclaw"]
+
+
+def test_resolve_cli_invocation_uses_windows_cmd_shim(monkeypatch) -> None:
+    monkeypatch.setattr("openclaw_skins.cli.os.name", "nt")
+
+    def fake_which(candidate: str) -> str | None:
+        if candidate == "openclaw.cmd":
+            return r"C:\Users\juan\AppData\Roaming\npm\openclaw.cmd"
+        return None
+
+    monkeypatch.setattr("openclaw_skins.cli.shutil.which", fake_which)
+
+    program, args = resolve_cli_invocation("openclaw")
+
+    assert program.lower().endswith("cmd.exe")
+    assert args == ["/c", r"C:\Users\juan\AppData\Roaming\npm\openclaw.cmd"]
 
 
 def test_status_parser_marks_missing_cli_as_unavailable() -> None:
@@ -103,11 +120,11 @@ def test_discover_gateway_auth_uses_dashboard_url_and_bootstrap_fallback(monkeyp
 
     def fake_run(args, **_kwargs):
         if args[-3:] == ["config", "get", "gateway.auth.token"]:
-            return SimpleNamespace(returncode=0, stdout="\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="__OPENCLAW_REDACTED__\n", stderr="")
         if args[-2:] == ["dashboard", "--no-open"]:
             return SimpleNamespace(
                 returncode=0,
-                stdout="Dashboard URL: http://127.0.0.1:18790/dashboard\n",
+                stdout="Dashboard URL: http://127.0.0.1:18790/#token=real-token\n",
                 stderr="",
             )
         if args[-4:] == ["qr", "--setup-code-only", "--url", "ws://127.0.0.1:18790"]:
@@ -124,6 +141,6 @@ def test_discover_gateway_auth_uses_dashboard_url_and_bootstrap_fallback(monkeyp
 
     assert discovery == GatewayAuthDiscovery(
         gateway_url="ws://127.0.0.1:18790",
-        gateway_token="",
-        bootstrap_token="bootstrap-123",
+        gateway_token="real-token",
+        bootstrap_token="",
     )
