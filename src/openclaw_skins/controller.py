@@ -43,11 +43,12 @@ class OpenClawController(QObject):
 
     def refresh(self) -> None:
         settings = self.settings_store.settings
+        gateway_token = self.cli_bridge.discover_gateway_token(settings)
         self.busy_tracker.clear()
         self.busy_changed.emit(False)
         if self.cli_bridge.check_gateway_status(settings):
             self.action_running_changed.emit("status", True)
-        self.gateway_client.start(settings.gateway_url, settings.gateway_token)
+        self.gateway_client.start(settings.gateway_url, gateway_token)
 
     def restart_gateway(self) -> None:
         if not self._service_status.can_restart:

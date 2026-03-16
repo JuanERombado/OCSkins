@@ -137,3 +137,14 @@ def test_window_emits_always_on_top_toggle(qtbot, tmp_path) -> None:
 
     assert toggles == [True]
     assert window.always_on_top_checkbox.isChecked() is True
+
+
+def test_overlay_panel_uses_most_of_canvas_space(qtbot, tmp_path) -> None:
+    manifest = build_manifest(tmp_path)
+    window = SkinHostWindow(manifest, tmp_path / "missing-icon.png")
+    qtbot.addWidget(window)
+
+    canvas = window._scale_rect(manifest.canvas_bounds)
+
+    assert window.overlay_panel.width() >= int(canvas.width() * 0.85)
+    assert window.overlay_panel.height() >= int(canvas.height() * 0.8)

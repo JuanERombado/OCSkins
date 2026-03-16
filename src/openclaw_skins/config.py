@@ -7,6 +7,7 @@ from pathlib import Path
 APP_NAME = "OpenClaw Skins"
 APP_SLUG = "openclaw-skins"
 APP_VENDOR = "OpenClawSkins"
+APP_VERSION = "0.1.0"
 PROTOCOL_VERSION = 3
 DEFAULT_GATEWAY_URL = os.environ.get("OPENCLAW_SKINS_GATEWAY_URL", "ws://127.0.0.1:18789")
 DEFAULT_CLI_COMMAND = os.environ.get("OPENCLAW_SKINS_CLI_COMMAND", "openclaw")
@@ -24,4 +25,3 @@ def local_app_data_dir() -> Path:
 
 def default_settings_path() -> Path:
     return local_app_data_dir() / "settings.json"
-

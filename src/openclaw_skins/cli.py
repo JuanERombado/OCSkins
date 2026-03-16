@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
 import shlex
+import subprocess
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
@@ -14,6 +16,45 @@ def split_cli_command(command: str) -> tuple[str, list[str]]:
     if not cleaned:
         raise ValueError("cli command cannot be empty")
     return cleaned[0], cleaned[1:]
+
+
+def discover_gateway_token(settings: AppSettings, timeout_seconds: float = 4.0) -> str:
+    explicit_token = settings.gateway_token.strip()
+    if explicit_token:
+        return explicit_token
+
+    for env_name in ("OPENCLAW_GATEWAY_TOKEN", "CLAWDBOT_GATEWAY_TOKEN"):
+        env_value = os.environ.get(env_name, "").strip()
+        if env_value:
+            return env_value
+
+    try:
+        program, base_args = split_cli_command(settings.cli_command)
+    except ValueError:
+        return ""
+
+    try:
+        completed = subprocess.run(
+            [program, *base_args, "config", "get", "gateway.auth.token"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+    if completed.returncode != 0:
+        return ""
+
+    candidate = completed.stdout.strip()
+    if not candidate:
+        return ""
+    if candidate.startswith("${") and candidate.endswith("}"):
+        return ""
+    if candidate.lower() in {"null", "none", "undefined"}:
+        return ""
+    return candidate
 
 
 def parse_gateway_status_output(output: str) -> GatewayServiceStatus:
@@ -87,6 +128,9 @@ class OpenClawCliBridge(QObject):
 
     def restart_gateway(self, settings: AppSettings) -> bool:
         return self._start("restart", settings, ["gateway", "restart"])
+
+    def discover_gateway_token(self, settings: AppSettings) -> str:
+        return discover_gateway_token(settings)
 
     def cancel(self) -> None:
         if self._process is not None:

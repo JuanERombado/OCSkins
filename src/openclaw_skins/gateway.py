@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import locale
 import platform
 import time
 import uuid
@@ -9,12 +10,47 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtNetwork import QAbstractSocket
 from PySide6.QtWebSockets import QWebSocket
 
-from openclaw_skins.config import APP_NAME, DEFAULT_TICK_INTERVAL_MS, PROTOCOL_VERSION, RECONNECT_DELAY_MS
+from openclaw_skins.config import (
+    APP_NAME,
+    APP_SLUG,
+    APP_VERSION,
+    DEFAULT_TICK_INTERVAL_MS,
+    PROTOCOL_VERSION,
+    RECONNECT_DELAY_MS,
+)
 from openclaw_skins.models import GatewayConnectionState
 
 
 def monotonic_ms() -> int:
     return time.monotonic_ns() // 1_000_000
+
+
+def build_connect_params(token: str) -> dict[str, object]:
+    locale_code = locale.getlocale()[0] or "en_US"
+    normalized_locale = locale_code.replace("_", "-")
+    platform_label = platform.platform()
+    instance_suffix = platform.node().strip().lower().replace(" ", "-") or "desktop"
+    params: dict[str, object] = {
+        "minProtocol": PROTOCOL_VERSION,
+        "maxProtocol": PROTOCOL_VERSION,
+        "client": {
+            "id": "gateway-client",
+            "displayName": APP_NAME,
+            "version": APP_VERSION,
+            "platform": platform_label,
+            "mode": "backend",
+            "instanceId": f"{APP_SLUG}-{instance_suffix}",
+        },
+        "caps": [],
+        "role": "operator",
+        "scopes": ["operator.read"],
+        "locale": normalized_locale,
+        "userAgent": f"{APP_NAME}/{APP_VERSION} ({platform_label})",
+    }
+    trimmed_token = token.strip()
+    if trimmed_token:
+        params["auth"] = {"token": trimmed_token}
+    return params
 
 
 class OpenClawGatewayClient(QObject):
@@ -96,7 +132,7 @@ class OpenClawGatewayClient(QObject):
             transport_connected=False,
             handshake_complete=False,
             live=False,
-            status_text="Connecting…",
+            status_text="Connecting...",
             detail_text=f"Opening {self._desired_url}",
             last_error=None,
         )
@@ -116,7 +152,7 @@ class OpenClawGatewayClient(QObject):
             transport_connected=True,
             handshake_complete=False,
             live=False,
-            status_text="Connected…",
+            status_text="Connected...",
             detail_text="Waiting for gateway handshake.",
             last_error=None,
         )
@@ -184,7 +220,11 @@ class OpenClawGatewayClient(QObject):
                 self._handle_hello(payload if isinstance(payload, dict) else {})
             else:
                 error = frame.get("error", {})
-                message = str(error.get("message", "Gateway handshake failed.")).strip() if isinstance(error, dict) else "Gateway handshake failed."
+                message = (
+                    str(error.get("message", "Gateway handshake failed.")).strip()
+                    if isinstance(error, dict)
+                    else "Gateway handshake failed."
+                )
                 self._last_error = message
                 self._emit_state(
                     transport_connected=False,
@@ -201,26 +241,11 @@ class OpenClawGatewayClient(QObject):
         if self._socket is None:
             return
         self._connect_request_id = str(uuid.uuid4())
-        params: dict[str, object] = {
-            "minProtocol": PROTOCOL_VERSION,
-            "maxProtocol": PROTOCOL_VERSION,
-            "client": {
-                "id": "openclaw-skins",
-                "displayName": APP_NAME,
-                "version": "0.1.0",
-                "platform": platform.platform(),
-                "mode": "backend",
-            },
-            "caps": [],
-            "role": "operator",
-        }
-        if self._desired_token:
-            params["auth"] = {"token": self._desired_token}
         frame = {
             "type": "req",
             "id": self._connect_request_id,
             "method": "connect",
-            "params": params,
+            "params": build_connect_params(self._desired_token),
         }
         self._socket.sendTextMessage(json.dumps(frame))
 
@@ -295,4 +320,3 @@ class OpenClawGatewayClient(QObject):
             tick_interval_ms=tick_interval_ms or self._tick_interval_ms,
         )
         self.connection_state_changed.emit(self._state)
-

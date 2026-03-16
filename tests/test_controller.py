@@ -33,6 +33,7 @@ class FakeCliBridge(QObject):
         self.status_requested = False
         self.restart_requested = False
         self.cancelled = False
+        self.discovered_token = "auto-token"
 
     def check_gateway_status(self, _settings) -> bool:
         self.status_requested = True
@@ -41,6 +42,9 @@ class FakeCliBridge(QObject):
     def restart_gateway(self, _settings) -> bool:
         self.restart_requested = True
         return True
+
+    def discover_gateway_token(self, _settings) -> str:
+        return self.discovered_token
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -55,7 +59,7 @@ def test_controller_refresh_starts_gateway_and_status_probe(tmp_path) -> None:
     controller.refresh()
 
     assert fake_cli.status_requested is True
-    assert fake_gateway.started_with == (store.settings.gateway_url, store.settings.gateway_token)
+    assert fake_gateway.started_with == (store.settings.gateway_url, "auto-token")
 
 
 def test_controller_restart_failure_emits_feedback(tmp_path) -> None:
@@ -82,4 +86,3 @@ def test_controller_restart_failure_emits_feedback(tmp_path) -> None:
 
     assert fake_cli.restart_requested is True
     assert feedback[-1] == ("permission denied", False)
-

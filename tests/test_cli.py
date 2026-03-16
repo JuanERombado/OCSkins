@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from openclaw_skins.cli import parse_gateway_status_output, split_cli_command
+from types import SimpleNamespace
+
+from openclaw_skins.cli import discover_gateway_token, parse_gateway_status_output, split_cli_command
+from openclaw_skins.models import AppSettings
 
 
 MISSING_SERVICE_OUTPUT = """
@@ -48,3 +51,19 @@ def test_status_parser_marks_missing_cli_as_unavailable() -> None:
     assert status.service_present is False
     assert status.can_restart is False
     assert "cli is unavailable" in status.summary.lower()
+
+
+def test_discover_gateway_token_prefers_explicit_settings_value() -> None:
+    settings = AppSettings(gateway_token="stored-token")
+    assert discover_gateway_token(settings) == "stored-token"
+
+
+def test_discover_gateway_token_uses_cli_config_fallback(monkeypatch) -> None:
+    settings = AppSettings(gateway_token="", cli_command="openclaw")
+
+    def fake_run(*_args, **_kwargs):
+        return SimpleNamespace(returncode=0, stdout="resolved-token\n")
+
+    monkeypatch.setattr("openclaw_skins.cli.subprocess.run", fake_run)
+
+    assert discover_gateway_token(settings) == "resolved-token"

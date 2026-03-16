@@ -25,7 +25,7 @@ from openclaw_skins.theme import ThemeTokens, build_stylesheet
 class StatusLight(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(18, 18)
+        self.setFixedSize(24, 24)
         self._live = False
 
     @property
@@ -88,11 +88,12 @@ class SkinHostWindow(QWidget):
         self.overlay_panel.setGeometry(self._overlay_rect())
 
         panel_layout = QVBoxLayout(self.overlay_panel)
-        panel_layout.setContentsMargins(16, 14, 16, 14)
-        panel_layout.setSpacing(10)
+        panel_layout.setContentsMargins(32, 28, 32, 28)
+        panel_layout.setSpacing(18)
 
         self.panel_title = QLabel(manifest.display_name)
         self.panel_title.setObjectName("PanelTitle")
+        self.panel_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         panel_layout.addWidget(self.panel_title)
 
         status_row = QHBoxLayout()
@@ -109,10 +110,11 @@ class SkinHostWindow(QWidget):
         self.detail_label.setObjectName("DetailLabel")
         self.detail_label.setWordWrap(True)
         panel_layout.addWidget(self.detail_label)
+        panel_layout.addStretch(1)
 
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(8)
+        button_row.setSpacing(12)
         self.refresh_button = QPushButton("Refresh")
         self.restart_button = QPushButton("Restart Gateway")
         self.refresh_button.clicked.connect(self.refresh_requested.emit)
@@ -226,14 +228,19 @@ class SkinHostWindow(QWidget):
         self._sync_toggle_action()
 
     def _overlay_rect(self) -> QRect:
-        anchor_x = self._scale_x(self.manifest.overlay_anchor.x)
-        anchor_y = self._scale_y(self.manifest.overlay_anchor.y)
         canvas = self._scale_rect(self.manifest.canvas_bounds)
-        max_width = max(320, min(430, canvas.width() - max(anchor_x - canvas.x(), 0) - 20))
-        max_height = max(138, min(190, canvas.height() - max(anchor_y - canvas.y(), 0) - 20))
-        right_limit = max(12, self.width() - max_width - 12)
-        bottom_limit = max(12, self.height() - max_height - 12)
-        return QRect(min(anchor_x, right_limit), min(anchor_y, bottom_limit), max_width, max_height)
+        inset_x = max(18, round(canvas.width() * 0.035))
+        inset_y = max(18, round(canvas.height() * 0.05))
+        rect = canvas.adjusted(inset_x, inset_y, -inset_x, -inset_y)
+        min_width = min(self.width() - 24, max(320, round(canvas.width() * 0.85)))
+        min_height = min(self.height() - 24, max(190, round(canvas.height() * 0.8)))
+        if rect.width() < min_width:
+            expand = min_width - rect.width()
+            rect.adjust(-(expand // 2), 0, expand - (expand // 2), 0)
+        if rect.height() < min_height:
+            expand = min_height - rect.height()
+            rect.adjust(0, -(expand // 2), 0, expand - (expand // 2))
+        return rect.intersected(QRect(12, 12, self.width() - 24, self.height() - 24))
 
     def _apply_frame(self, index: int) -> None:
         pixmap = self.frames[index]
