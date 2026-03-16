@@ -21,6 +21,20 @@ uv pip install -e .[dev]
 python -m openclaw_skins
 ```
 
+## Click To Run
+
+After pulling the repo, the simplest option is to double-click:
+
+`release\OpenClaw Skins.exe`
+
+If you want to rebuild that launcher from source, run:
+
+```powershell
+.\scripts\build.ps1
+```
+
+That script creates a single-file Windows app and copies it to `release\OpenClaw Skins.exe`.
+
 ## Settings
 
 The app stores settings at `%LOCALAPPDATA%\OpenClawSkins\settings.json`.
@@ -49,6 +63,4 @@ pytest
 
 ## Packaging
 
-```powershell
-.\scripts\build.ps1
-```
+The packaged launcher is stored at `release\OpenClaw Skins.exe`.

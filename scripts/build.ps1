@@ -5,6 +5,8 @@ Set-Location $root
 
 $python = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "python" }
 $buildName = "OpenClaw Skins"
+$releaseDir = Join-Path $root "release"
+$releaseExe = Join-Path $releaseDir "$buildName.exe"
 
 & $python scripts\generate_assets.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -12,6 +14,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $python -m PyInstaller `
   --noconfirm `
   --clean `
+  --onefile `
   --windowed `
   --name $buildName `
   --icon assets\icons\openclaw-skins.ico `
@@ -20,3 +23,8 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   src\openclaw_skins\__main__.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+if (-not (Test-Path $releaseDir)) {
+  New-Item -ItemType Directory -Path $releaseDir | Out-Null
+}
+
+Copy-Item -Path (Join-Path $root "dist\$buildName.exe") -Destination $releaseExe -Force
